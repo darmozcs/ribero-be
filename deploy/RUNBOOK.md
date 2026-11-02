@@ -26,8 +26,9 @@ la llave pública RSA que ya usa `darmoz-auth`.
    sudo ./svc.sh install darmoz
    sudo ./svc.sh start
    ```
-6. `git push` a `main` → dispara CI: test → build & push a GHCR → deploy
-   (`docker compose pull && up -d` en el server vía el runner).
+6. `git push` a `develop` → dispara `deploy-testing.yml`: test → build & push
+   a GHCR → deploy (`docker compose pull && up -d` en el server vía el
+   runner). `main` queda para producción (Railway, todavía sin configurar).
 7. Si `docker compose pull` da `denied`: hacer público el paquete en
    `github.com/darmozcs?tab=packages` → `ribero-be` → Package settings →
    Public (o `docker login ghcr.io` en el server con un token
@@ -54,6 +55,7 @@ docker compose logs -f
 - Las tablas propias (`rb_users`, `rb_locales`, `rb_ventas`, ...) y la tabla de historial de
   Flyway (`rb_flyway_schema_history`) están prefijadas para convivir en la
   misma base `nexora` que usa `darmoz-auth` sin colisionar con sus `auth_*`.
-- `app.expected-application-id` queda sin configurar hasta que se
-  provisione un UUID de Application dedicado en darmoz-auth para este
-  servicio; mientras tanto el filtro solo valida firma RS256 + issuer.
+- `APP_EXPECTED_APPLICATION_ID` es la aplicación "ribero" de darmoz-auth
+  (`33333333-3333-3333-3333-333333333333`, migración V9): solo se aceptan
+  tokens emitidos para esa aplicación. Requiere que darmoz-auth esté
+  deployado con la V9 antes que este servicio.
