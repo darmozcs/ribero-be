@@ -1,0 +1,25 @@
+name: ribero-be
+
+services:
+  ribero-be:
+    image: ${APP_IMAGE:-ghcr.io/darmozcs/ribero-be:latest}
+    container_name: ribero-be
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./keys:/app/keys:ro
+    networks: [proxy, data]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      - "traefik.http.routers.ribero-be.rule=Host(`${APP_DOMAIN}`) && PathPrefix(`${APP_PATH_PREFIX}`)"
+      - "traefik.http.routers.ribero-be.entrypoints=websecure"
+      - "traefik.http.routers.ribero-be.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.ribero-be.middlewares=secure-headers@file"
+      - "traefik.http.services.ribero-be.loadbalancer.server.port=${APP_PORT}"
+
+networks:
+  proxy:
+    external: true
+  data:
+    external: true

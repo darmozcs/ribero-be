@@ -1,0 +1,27 @@
+target/
+*.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets / local keys - never commit
+.env
+*.key
+
+# keys-dev/ contiene SOLO la llave publica de desarrollo (no es secreta) y
+# se commitea a proposito para que el equipo pueda levantar el servicio
+# localmente sin pasos extra. Nunca agregar una private_key.pem aca.
+!keys-dev/
+!keys-dev/public_key.pem

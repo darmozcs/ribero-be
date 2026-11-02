@@ -1,0 +1,12 @@
+jwt:
+  issuer: darmoz-auth
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+# Los tokens de test no llevan applicationId (ver TestJwtFactory).
+app:
+  expected-application-id:

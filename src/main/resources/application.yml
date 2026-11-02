@@ -1,0 +1,42 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /ribero-api
+
+spring:
+  application:
+    name: ribero-be
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/nexora}
+    username: ${SPRING_DATASOURCE_USERNAME:nexora}
+    password: ${SPRING_DATASOURCE_PASSWORD:nexora}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    table: rb_flyway_schema_history
+    baseline-on-migrate: true
+    baseline-version: 0
+
+jwt:
+  public-key-path: ${JWT_PUBLIC_KEY_PATH:./keys-dev/public_key.pem}
+  issuer: ${JWT_ISSUER:darmoz-auth}
+
+app:
+  expected-application-id: ${APP_EXPECTED_APPLICATION_ID:33333333-3333-3333-3333-333333333333}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    com.darmoz.ribero: INFO
