@@ -150,6 +150,34 @@ class SyncControllerIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void elVendedorEditaYEliminaDelLocalYUnIngresoLoVuelveAAgregar() {
+        String barcode = "782" + System.nanoTime();
+        sync(op(UUID.randomUUID(), "INGRESO", Map.of("localId", localId, "createdAt", Instant.now().toString(),
+                "items", List.of(item(barcode, "Yerba", "1500.00", 5)))));
+
+        Map<String, Object> editar = op(UUID.randomUUID(), "EDITAR_PRODUCTO", Map.of("localId", localId,
+                "barcode", barcode, "nombre", "Yerba 1 kg", "precio", "1800.00", "cantidad", 7,
+                "createdAt", Instant.now().toString()));
+        assertThat(statuses(sync(editar, editar))).containsExactly("ok", "duplicada");
+        JsonNode editado = producto(barcode);
+        assertThat(editado.get("nombre").asText()).isEqualTo("Yerba 1 kg");
+        assertThat(editado.get("precio").decimalValue()).isEqualByComparingTo("1800.00");
+        assertThat(editado.get("stock").asInt()).isEqualTo(7);
+
+        assertThat(statuses(sync(op(UUID.randomUUID(), "ELIMINAR_PRODUCTO", Map.of("localId", localId,
+                "barcode", barcode, "createdAt", Instant.now().toString()))))).containsExactly("ok");
+        JsonNode eliminado = producto(barcode);
+        assertThat(eliminado.get("eliminado").asBoolean()).isTrue();
+        assertThat(eliminado.get("stock").asInt()).isZero();
+
+        sync(op(UUID.randomUUID(), "INGRESO", Map.of("localId", localId, "createdAt", Instant.now().toString(),
+                "items", List.of(item(barcode, "Yerba 1 kg", "1800.00", 2)))));
+        JsonNode reingresado = producto(barcode);
+        assertThat(reingresado.get("eliminado").asBoolean()).isFalse();
+        assertThat(reingresado.get("stock").asInt()).isEqualTo(2);
+    }
+
+    @Test
     void operacionEnLocalSinAccesoSeRechaza() {
         UUID ajeno = crearLocal("Ajeno " + UUID.randomUUID());
         JsonNode result = sync(op(UUID.randomUUID(), "INGRESO", Map.of("localId", ajeno,

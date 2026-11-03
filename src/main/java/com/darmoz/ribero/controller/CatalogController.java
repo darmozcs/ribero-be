@@ -50,7 +50,8 @@ public class CatalogController {
         Instant serverTime = Instant.now().minus(1, ChronoUnit.MINUTES);
         List<CatalogItem> items = jdbc.sql("""
                         SELECT p.barcode, p.format, p.nombre, p.precio, p.has_photo,
-                               COALESCE(s.cantidad, 0) AS stock, COALESCE(s.activo, TRUE) AS activo
+                               COALESCE(s.cantidad, 0) AS stock, COALESCE(s.activo, TRUE) AS activo,
+                               COALESCE(s.eliminado, FALSE) AS eliminado
                         FROM rb_products p
                         LEFT JOIN rb_stock s ON s.product_id = p.id AND s.local_id = :localId
                         WHERE p.updated_at > :since OR s.updated_at > :since
@@ -103,9 +104,12 @@ public class CatalogController {
         return ResponseEntity.noContent().build();
     }
 
-    /** activo = false: inhabilitado en este local (no se vende). */
+    /**
+     * activo = false: inhabilitado en este local (no se vende). eliminado = true: se saco del
+     * catalogo de este local; viaja igual para que el celular lo borre de su copia.
+     */
     public record CatalogItem(String barcode, String format, String nombre, BigDecimal precio,
-                              boolean hasPhoto, int stock, boolean activo) {
+                              boolean hasPhoto, int stock, boolean activo, boolean eliminado) {
     }
 
     public record CatalogResponse(Instant serverTime, List<CatalogItem> products) {

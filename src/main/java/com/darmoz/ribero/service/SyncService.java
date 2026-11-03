@@ -85,7 +85,91 @@ public class SyncService {
             case AJUSTE_STOCK -> ajusteStock(user, deviceId, op.opId(), payload(op, SyncRequest.AjusteStock.class));
             case ESTADO_PRODUCTO ->
                     estadoProducto(user, deviceId, op.opId(), payload(op, SyncRequest.EstadoProducto.class));
+            case EDITAR_PRODUCTO ->
+                    editarProducto(user, deviceId, op.opId(), payload(op, SyncRequest.EditarProducto.class));
+            case ELIMINAR_PRODUCTO ->
+                    eliminarProducto(user, deviceId, op.opId(), payload(op, SyncRequest.EliminarProducto.class));
         };
+    }
+
+    /**
+     * Vendedor o administrador. Nombre y precio son del catalogo global (salvo que haya un dato
+     * mas nuevo, igual que en el ingreso); la cantidad, si viene, reemplaza el stock del local.
+     */
+    private String editarProducto(AuthUser user, UUID deviceId, UUID id, SyncRequest.EditarProducto p) {
+        if (exists("rb_ajustes", id)) {
+            return SyncResponse.DUPLICADA;
+        }
+        exigirLocal(user, p.localId());
+        requerir(p.createdAt() != null, "Falta la fecha de la edicion");
+        requerir(p.nombre() != null && !p.nombre().isBlank(), "Falta el nombre");
+        requerir(p.precio() != null && p.precio().signum() >= 0, "Precio invalido");
+        requerir(p.cantidad() == null || p.cantidad() >= 0, "Cantidad invalida");
+        UUID productId = productoExistente(p.barcode());
+
+        jdbc.sql("""
+                        UPDATE rb_products SET nombre = :nombre, precio = :precio, precio_at = :at, updated_at = now()
+                        WHERE id = :pid AND precio_at <= :at
+                        """)
+                .param("nombre", p.nombre().trim())
+                .param("precio", p.precio())
+                .param("at", ts(p.createdAt()))
+                .param("pid", productId)
+                .update();
+        Integer anterior = null;
+        if (p.cantidad() != null) {
+            anterior = stockActual(p.localId(), productId);
+            reemplazarStock(p.localId(), productId, p.cantidad());
+        }
+        registrarAjuste(id, "EDITAR_PRODUCTO", user, deviceId, p.localId(), productId, p.createdAt(),
+                anterior, p.cantidad(), null, p.nombre().trim(), p.precio());
+        return SyncResponse.OK;
+    }
+
+    /** Vendedor o administrador: lo saca del catalogo de este local con stock 0. */
+    private String eliminarProducto(AuthUser user, UUID deviceId, UUID id, SyncRequest.EliminarProducto p) {
+        if (exists("rb_ajustes", id)) {
+            return SyncResponse.DUPLICADA;
+        }
+        exigirLocal(user, p.localId());
+        requerir(p.createdAt() != null, "Falta la fecha de la eliminacion");
+        UUID productId = productoExistente(p.barcode());
+
+        Integer anterior = stockActual(p.localId(), productId);
+        jdbc.sql("""
+                        INSERT INTO rb_stock (local_id, product_id, cantidad, eliminado) VALUES (:localId, :pid, 0, TRUE)
+                        ON CONFLICT (local_id, product_id) DO UPDATE
+                            SET cantidad = 0, eliminado = TRUE, updated_at = now()
+                        """)
+                .param("localId", p.localId())
+                .param("pid", productId)
+                .update();
+        registrarAjuste(id, "ELIMINAR_PRODUCTO", user, deviceId, p.localId(), productId, p.createdAt(),
+                anterior, 0, null, null, null);
+        return SyncResponse.OK;
+    }
+
+    private int stockActual(UUID localId, UUID productId) {
+        return jdbc.sql("""
+                        SELECT cantidad FROM rb_stock WHERE local_id = :localId AND product_id = :pid FOR UPDATE
+                        """)
+                .param("localId", localId)
+                .param("pid", productId)
+                .query(Integer.class)
+                .optional()
+                .orElse(0);
+    }
+
+    private void reemplazarStock(UUID localId, UUID productId, int cantidad) {
+        jdbc.sql("""
+                        INSERT INTO rb_stock (local_id, product_id, cantidad) VALUES (:localId, :pid, :cant)
+                        ON CONFLICT (local_id, product_id) DO UPDATE
+                            SET cantidad = EXCLUDED.cantidad, updated_at = now()
+                        """)
+                .param("localId", localId)
+                .param("pid", productId)
+                .param("cant", cantidad)
+                .update();
     }
 
     /**
@@ -102,25 +186,10 @@ public class SyncService {
         requerir(p.cantidad() != null && p.cantidad() >= 0, "Cantidad invalida");
         UUID productId = productoExistente(p.barcode());
 
-        Integer anterior = jdbc.sql("""
-                        SELECT cantidad FROM rb_stock WHERE local_id = :localId AND product_id = :pid FOR UPDATE
-                        """)
-                .param("localId", p.localId())
-                .param("pid", productId)
-                .query(Integer.class)
-                .optional()
-                .orElse(0);
-        jdbc.sql("""
-                        INSERT INTO rb_stock (local_id, product_id, cantidad) VALUES (:localId, :pid, :cant)
-                        ON CONFLICT (local_id, product_id) DO UPDATE
-                            SET cantidad = EXCLUDED.cantidad, updated_at = now()
-                        """)
-                .param("localId", p.localId())
-                .param("pid", productId)
-                .param("cant", p.cantidad())
-                .update();
+        int anterior = stockActual(p.localId(), productId);
+        reemplazarStock(p.localId(), productId, p.cantidad());
         registrarAjuste(id, "AJUSTE_STOCK", user, deviceId, p.localId(), productId, p.createdAt(),
-                anterior, p.cantidad(), null);
+                anterior, p.cantidad(), null, null, null);
         return SyncResponse.OK;
     }
 
@@ -143,16 +212,18 @@ public class SyncService {
                 .param("activo", p.activo())
                 .update();
         registrarAjuste(id, "ESTADO_PRODUCTO", user, deviceId, p.localId(), productId, p.createdAt(),
-                null, null, p.activo());
+                null, null, p.activo(), null, null);
         return SyncResponse.OK;
     }
 
     private void registrarAjuste(UUID id, String tipo, AuthUser user, UUID deviceId, UUID localId, UUID productId,
-                                 Instant createdAt, Integer anterior, Integer nueva, Boolean activo) {
+                                 Instant createdAt, Integer anterior, Integer nueva, Boolean activo,
+                                 String nombre, BigDecimal precio) {
         jdbc.sql("""
                         INSERT INTO rb_ajustes (id, tipo, local_id, product_id, device_id, user_email,
-                                                cantidad_anterior, cantidad_nueva, activo, created_at)
-                        VALUES (:id, :tipo, :localId, :pid, :deviceId, :email, :anterior, :nueva, :activo, :createdAt)
+                                                cantidad_anterior, cantidad_nueva, activo, nombre, precio, created_at)
+                        VALUES (:id, :tipo, :localId, :pid, :deviceId, :email, :anterior, :nueva, :activo,
+                                :nombre, :precio, :createdAt)
                         """)
                 .param("id", id)
                 .param("tipo", tipo)
@@ -163,6 +234,8 @@ public class SyncService {
                 .param("anterior", anterior)
                 .param("nueva", nueva)
                 .param("activo", activo)
+                .param("nombre", nombre)
+                .param("precio", precio)
                 .param("createdAt", ts(createdAt))
                 .update();
     }
@@ -220,7 +293,17 @@ public class SyncService {
                     .param("pid", productId)
                     .param("cant", item.cantidad())
                     .update();
-            sumarStock(p.localId(), productId, item.cantidad());
+            // Si estaba eliminado del local, el ingreso lo vuelve a agregar.
+            jdbc.sql("""
+                            INSERT INTO rb_stock (local_id, product_id, cantidad) VALUES (:localId, :pid, :cant)
+                            ON CONFLICT (local_id, product_id) DO UPDATE
+                                SET cantidad = rb_stock.cantidad + EXCLUDED.cantidad, eliminado = FALSE,
+                                    updated_at = now()
+                            """)
+                    .param("localId", p.localId())
+                    .param("pid", productId)
+                    .param("cant", item.cantidad())
+                    .update();
         }
         return SyncResponse.OK;
     }
