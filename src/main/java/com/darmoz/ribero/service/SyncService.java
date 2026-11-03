@@ -82,7 +82,103 @@ public class SyncService {
             case VENTA -> venta(user, deviceId, op.opId(), payload(op, SyncRequest.Venta.class));
             case ANULACION -> anulacion(user, deviceId, op.opId(), payload(op, SyncRequest.Anulacion.class));
             case CIERRE -> cierre(user, deviceId, op.opId(), payload(op, SyncRequest.Cierre.class));
+            case AJUSTE_STOCK -> ajusteStock(user, deviceId, op.opId(), payload(op, SyncRequest.AjusteStock.class));
+            case ESTADO_PRODUCTO ->
+                    estadoProducto(user, deviceId, op.opId(), payload(op, SyncRequest.EstadoProducto.class));
         };
+    }
+
+    /**
+     * Reemplaza el stock del local por el contado. Se aplica en el orden en que llega: si
+     * hubo ventas sin conexion hechas antes del conteo y sincronizadas despues, el stock
+     * queda con el conteo menos esas ventas.
+     */
+    private String ajusteStock(AuthUser user, UUID deviceId, UUID id, SyncRequest.AjusteStock p) {
+        if (exists("rb_ajustes", id)) {
+            return SyncResponse.DUPLICADA;
+        }
+        exigirAdminEnLocal(user, p.localId());
+        requerir(p.createdAt() != null, "Falta la fecha del ajuste");
+        requerir(p.cantidad() != null && p.cantidad() >= 0, "Cantidad invalida");
+        UUID productId = productoExistente(p.barcode());
+
+        Integer anterior = jdbc.sql("""
+                        SELECT cantidad FROM rb_stock WHERE local_id = :localId AND product_id = :pid FOR UPDATE
+                        """)
+                .param("localId", p.localId())
+                .param("pid", productId)
+                .query(Integer.class)
+                .optional()
+                .orElse(0);
+        jdbc.sql("""
+                        INSERT INTO rb_stock (local_id, product_id, cantidad) VALUES (:localId, :pid, :cant)
+                        ON CONFLICT (local_id, product_id) DO UPDATE
+                            SET cantidad = EXCLUDED.cantidad, updated_at = now()
+                        """)
+                .param("localId", p.localId())
+                .param("pid", productId)
+                .param("cant", p.cantidad())
+                .update();
+        registrarAjuste(id, "AJUSTE_STOCK", user, deviceId, p.localId(), productId, p.createdAt(),
+                anterior, p.cantidad(), null);
+        return SyncResponse.OK;
+    }
+
+    private String estadoProducto(AuthUser user, UUID deviceId, UUID id, SyncRequest.EstadoProducto p) {
+        if (exists("rb_ajustes", id)) {
+            return SyncResponse.DUPLICADA;
+        }
+        exigirAdminEnLocal(user, p.localId());
+        requerir(p.createdAt() != null, "Falta la fecha del cambio");
+        requerir(p.activo() != null, "Falta si el producto queda habilitado");
+        UUID productId = productoExistente(p.barcode());
+
+        jdbc.sql("""
+                        INSERT INTO rb_stock (local_id, product_id, cantidad, activo) VALUES (:localId, :pid, 0, :activo)
+                        ON CONFLICT (local_id, product_id) DO UPDATE
+                            SET activo = EXCLUDED.activo, updated_at = now()
+                        """)
+                .param("localId", p.localId())
+                .param("pid", productId)
+                .param("activo", p.activo())
+                .update();
+        registrarAjuste(id, "ESTADO_PRODUCTO", user, deviceId, p.localId(), productId, p.createdAt(),
+                null, null, p.activo());
+        return SyncResponse.OK;
+    }
+
+    private void registrarAjuste(UUID id, String tipo, AuthUser user, UUID deviceId, UUID localId, UUID productId,
+                                 Instant createdAt, Integer anterior, Integer nueva, Boolean activo) {
+        jdbc.sql("""
+                        INSERT INTO rb_ajustes (id, tipo, local_id, product_id, device_id, user_email,
+                                                cantidad_anterior, cantidad_nueva, activo, created_at)
+                        VALUES (:id, :tipo, :localId, :pid, :deviceId, :email, :anterior, :nueva, :activo, :createdAt)
+                        """)
+                .param("id", id)
+                .param("tipo", tipo)
+                .param("localId", localId)
+                .param("pid", productId)
+                .param("deviceId", deviceId)
+                .param("email", user.email())
+                .param("anterior", anterior)
+                .param("nueva", nueva)
+                .param("activo", activo)
+                .param("createdAt", ts(createdAt))
+                .update();
+    }
+
+    private void exigirAdminEnLocal(AuthUser user, UUID localId) {
+        requerir(user.isAdmin(), "Solo el administrador puede ajustar productos");
+        exigirLocal(user, localId);
+    }
+
+    private UUID productoExistente(String barcode) {
+        requerir(barcode != null && !barcode.isBlank(), "Falta el codigo");
+        return jdbc.sql("SELECT id FROM rb_products WHERE barcode = :barcode")
+                .param("barcode", barcode)
+                .query(UUID.class)
+                .optional()
+                .orElseThrow(() -> new Rechazo("Producto inexistente: " + barcode));
     }
 
     private String ingreso(AuthUser user, UUID deviceId, UUID id, SyncRequest.Ingreso p) {

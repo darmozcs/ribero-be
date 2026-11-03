@@ -126,6 +126,30 @@ class SyncControllerIT extends AbstractIntegrationTest {
     }
 
     @Test
+    void soloElAdministradorAjustaStockEInhabilita() {
+        String barcode = "781" + System.nanoTime();
+        sync(op(UUID.randomUUID(), "INGRESO", Map.of("localId", localId, "createdAt", Instant.now().toString(),
+                "items", List.of(item(barcode, "Aceite", "900.00", 4)))));
+
+        Map<String, Object> ajuste = op(UUID.randomUUID(), "AJUSTE_STOCK", Map.of(
+                "localId", localId, "barcode", barcode, "cantidad", 10, "createdAt", Instant.now().toString()));
+        Map<String, Object> inhabilitar = op(UUID.randomUUID(), "ESTADO_PRODUCTO", Map.of(
+                "localId", localId, "barcode", barcode, "activo", false, "createdAt", Instant.now().toString()));
+
+        // El vendedor no puede.
+        assertThat(statuses(sync(ajuste, inhabilitar))).containsExactly("rechazada", "rechazada");
+        assertThat(stock(barcode)).isEqualTo(4);
+
+        ResponseEntity<JsonNode> response = post("/api/rb/sync", adminToken,
+                Map.of("deviceId", deviceId, "ops", List.of(ajuste, inhabilitar, ajuste)));
+        assertThat(statuses(response.getBody())).containsExactly("ok", "ok", "duplicada");
+
+        JsonNode producto = producto(barcode);
+        assertThat(producto.get("stock").asInt()).isEqualTo(10);
+        assertThat(producto.get("activo").asBoolean()).isFalse();
+    }
+
+    @Test
     void operacionEnLocalSinAccesoSeRechaza() {
         UUID ajeno = crearLocal("Ajeno " + UUID.randomUUID());
         JsonNode result = sync(op(UUID.randomUUID(), "INGRESO", Map.of("localId", ajeno,

@@ -17,7 +17,7 @@ import java.util.UUID;
  */
 public record SyncRequest(@NotNull UUID deviceId, @NotNull @Size(max = 200) List<@Valid Op> ops) {
 
-    public enum OpType { INGRESO, VENTA, ANULACION, CIERRE }
+    public enum OpType { INGRESO, VENTA, ANULACION, CIERRE, AJUSTE_STOCK, ESTADO_PRODUCTO }
 
     public record Op(@NotNull UUID opId, @NotNull OpType type, @NotNull JsonNode payload) {
     }
@@ -37,6 +37,14 @@ public record SyncRequest(@NotNull UUID deviceId, @NotNull @Size(max = 200) List
     }
 
     public record Anulacion(UUID localId, UUID ventaId, String motivo, Instant createdAt) {
+    }
+
+    /** Stock contado por el administrador: reemplaza la cantidad del local. */
+    public record AjusteStock(UUID localId, String barcode, Integer cantidad, Instant createdAt) {
+    }
+
+    /** Habilita o inhabilita el producto en el local (inhabilitado = no se vende). */
+    public record EstadoProducto(UUID localId, String barcode, Boolean activo, Instant createdAt) {
     }
 
     public record Cierre(UUID localId, Instant desde, Instant hasta, int cantidadVentas, BigDecimal totalVentas,
